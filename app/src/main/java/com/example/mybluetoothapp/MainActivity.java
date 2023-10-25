@@ -2,10 +2,14 @@ package com.example.mybluetoothapp;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.annotations.SerializedName;
 
 import android.Manifest;
 import android.app.Activity;
@@ -23,9 +27,12 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -44,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
     InputStream inputStream;
     int REQUEST_ENABLE_BT;
     Set<BluetoothDevice> pairedDevices;
+    Gson gson;
 
     private byte[] Buffer;
 
@@ -51,6 +59,8 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        gson = new Gson();
 
         ConnectionText = (TextView) findViewById(R.id.dispositivos);
 
@@ -68,6 +78,7 @@ public class MainActivity extends AppCompatActivity {
         if (bluetoothAdapter == null) {
             Toast.makeText(getApplicationContext(), "Dispositivo não suporta bluetooth!!", Toast.LENGTH_LONG).show();
         } else {
+            tryToConnect();
             turnOnMethods();
             turnOffMethods();
             connectMethods();
@@ -104,92 +115,95 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void connectMethods() {
         BtnConnect.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(bluetoothSocket != null && bluetoothSocket.isConnected()){
-                    Toast.makeText(getApplicationContext(),"O dispostivo ja esta conectado",Toast.LENGTH_SHORT).show();
-                    return;
-                }
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    requestBluetoothPermission();
-                    return;
-                }
-
-                if(!bluetoothAdapter.isEnabled()){
-                    turnOnBluetooth();
-                    return;
-
-                }
-
-                pairedDevices = bluetoothAdapter.getBondedDevices();
-                for (BluetoothDevice device : pairedDevices) {
-                    if (device.getName().equals("HC-06")) {
-                        macAddress = device.getAddress();
-                        Toast.makeText(getApplicationContext(), "O dispositivo foi encontrado no historico", Toast.LENGTH_SHORT).show();
-                        break;
-                    }
-                }
-
-                bluetoothDevice = bluetoothAdapter.getRemoteDevice(macAddress);
-
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-
-
-                        if (ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_DENIED) {
-                            if (Build.VERSION.SDK_INT > 31) {
-                                ActivityCompat.requestPermissions(MainActivity.this, new String[]{android.Manifest.permission.BLUETOOTH_CONNECT}, 100);
-                            }
-                        }
-
-                        int counter = 0;
-                        do{
-                            try {
-                                bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
-                                bluetoothSocket.connect();
-                            }catch(IOException err){
-                                err.printStackTrace();
-                            }
-                            counter++;
-                        }while (!bluetoothSocket.isConnected() && counter < 0);
-                        if(!bluetoothSocket.isConnected()){
-                            runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    Toast.makeText(MainActivity.this, "Não foi possivel se conectar ao dispositivo, tente novamente :(", Toast.LENGTH_SHORT).show();
-                                }
-                            });
-                            return;
-                        }
-                        try {
-                            outputStream = bluetoothSocket.getOutputStream();
-                            inputStream = bluetoothSocket.getInputStream();
-                            Log.d("Message", "Connected to HC-06");
-                            runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    Toast.makeText(MainActivity.this, "Bluetooth successfully connected", Toast.LENGTH_SHORT).show();
-                                }
-                            });
-
-                        } catch (IOException e) {
-                            Log.d("Message", "Turn on bluetooth and restart the app");
-                            runOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    Toast.makeText(MainActivity.this, "Turn on bluetooth and restart the app", Toast.LENGTH_SHORT).show();
-                                }
-                            });
-                            throw new RuntimeException(e);
-                        }
-                    }
-                }).start();
+                tryToConnect();
             }
         });
+    }
+
+    private void tryToConnect(){
+        if(bluetoothSocket != null && bluetoothSocket.isConnected()){
+            Toast.makeText(getApplicationContext(),"O dispostivo ja esta conectado",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            requestBluetoothPermission();
+            return;
+        }
+
+        if(!bluetoothAdapter.isEnabled()){
+            turnOnBluetooth();
+            return;
+
+        }
+
+        pairedDevices = bluetoothAdapter.getBondedDevices();
+        for (BluetoothDevice device : pairedDevices) {
+            if (device.getName().equals("HC-06")) {
+                macAddress = device.getAddress();
+                Toast.makeText(getApplicationContext(), "O dispositivo foi encontrado no historico", Toast.LENGTH_SHORT).show();
+                break;
+            }
+        }
+
+        bluetoothDevice = bluetoothAdapter.getRemoteDevice(macAddress);
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+
+
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_DENIED) {
+                    if (Build.VERSION.SDK_INT > 31) {
+                        ActivityCompat.requestPermissions(MainActivity.this, new String[]{android.Manifest.permission.BLUETOOTH_CONNECT}, 100);
+                    }
+                }
+
+                int counter = 0;
+                do{
+                    try {
+                        bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
+                        bluetoothSocket.connect();
+                    }catch(IOException err){
+                        err.printStackTrace();
+                    }
+                    counter++;
+                }while (!bluetoothSocket.isConnected() && counter < 0);
+                if(!bluetoothSocket.isConnected()){
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "Não foi possivel se conectar ao dispositivo, tente novamente :(", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                    return;
+                }
+                try {
+                    outputStream = bluetoothSocket.getOutputStream();
+                    inputStream = bluetoothSocket.getInputStream();
+                    Log.d("Message", "Connected to HC-06");
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "Bluetooth successfully connected", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+
+                } catch (IOException e) {
+                    Log.d("Message", "Turn on bluetooth and restart the app");
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "Turn on bluetooth and restart the app", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
     }
 
     private void turnOnMethods() {
@@ -264,17 +278,24 @@ public class MainActivity extends AppCompatActivity {
                     new Thread(new Runnable() {
                         @Override
                         public void run() {
-                            Buffer = new byte[1024];
-                            int numBytes;
                             try {
-                                for(int i = 0; i < 30; i++) {
-                                    numBytes = inputStream.read(Buffer);
-                                    String data = new String(Buffer, 0, numBytes);
-
-                                    if (!data.isEmpty())
-                                        ConnectionText.setText(data);
-                                }
-                            } catch (Exception e) {
+                                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
+                                    String line = reader.readLine();
+                                    Log.e(TAG,line);
+                                    while (line != null) {
+                                        // Processar a linha de dados
+                                        if (!line.isEmpty()) {
+                                            try {
+                                                DadosClass dadosClass = gson.fromJson(line, DadosClass.class);
+                                                int potenciomerterValue = dadosClass.getValue();
+                                                ConnectionText.setText(dadosClass.toString());
+                                            }catch (JsonSyntaxException err){
+                                                Log.e(TAG,"Recebeu uma informação que não é JSON",err);
+                                            }
+                                        }
+                                        line = reader.readLine();
+                                    }
+                            } catch (IOException e) {
                                 Log.d(TAG, "Input stream was disconnected", e);
                             }
                         }
@@ -282,4 +303,39 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
+
+
+    public class DadosClass{
+        @SerializedName("sensor")
+        private String sensor;
+        @SerializedName("value")
+        private int value;
+
+        public DadosClass(String sensor, int value){
+            this.setValue(value);
+            this.setSensor(sensor);
+        }
+
+        public DadosClass(){}
+
+        @NonNull
+        @Override
+        public String toString() {
+            return "Sensor : " + this.getSensor() + "; Valor : " + (this.getValue() * 4) ;
+        }
+
+        public void setSensor(String sensor){
+            this.sensor = sensor;
+        }
+        public String getSensor(){
+            return this.sensor;
+        }
+        public void setValue(int value){
+            this.value = value;
+        }
+        public int getValue(){
+            return this.value;
+        }
+    }
 }
+
