@@ -1,8 +1,14 @@
 package com.example.mybluetoothapp;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
+import android.Manifest;
+import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
@@ -11,8 +17,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Message;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -57,7 +61,9 @@ public class MainActivity extends AppCompatActivity {
 
         bluetoothManager = getSystemService(BluetoothManager.class);
         bluetoothAdapter = bluetoothManager.getAdapter();
-        REQUEST_ENABLE_BT = 1;
+        REQUEST_ENABLE_BT = 100;
+
+        requestBluetoothPermission();
 
         if (bluetoothAdapter == null) {
             Toast.makeText(getApplicationContext(), "Dispositivo não suporta bluetooth!!", Toast.LENGTH_LONG).show();
@@ -69,21 +75,60 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void connectMethods(){
+    private void requestPermission(String permission){
+        if (ContextCompat.checkSelfPermission(MainActivity.this, permission) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(MainActivity.this, new String[]{permission}, REQUEST_ENABLE_BT);
+        }
+    }
+
+    private void requestBluetoothPermission(){
+        requestPermission(Manifest.permission.BLUETOOTH);
+        requestPermission(Manifest.permission.BLUETOOTH_CONNECT);
+    }
+
+    ActivityResultLauncher<Intent> enableBtLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == Activity.RESULT_OK) {
+                    // Bluetooth ativado com sucesso
+                }
+            }
+    );
+
+    private void turnOnBluetooth(){
+        if (bluetoothAdapter != null) {
+            if (!bluetoothAdapter.isEnabled()) {
+                Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                enableBtLauncher.launch(enableBtIntent);
+            }
+        }
+    }
+
+
+    private void connectMethods() {
         BtnConnect.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_DENIED) {
-                    if (Build.VERSION.SDK_INT > 31) {
-                        ActivityCompat.requestPermissions(MainActivity.this, new String[]{android.Manifest.permission.BLUETOOTH_CONNECT}, 100);
-                    }
+                if(bluetoothSocket != null && bluetoothSocket.isConnected()){
+                    Toast.makeText(getApplicationContext(),"O dispostivo ja esta conectado",Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    requestBluetoothPermission();
+                    return;
+                }
+
+                if(!bluetoothAdapter.isEnabled()){
+                    turnOnBluetooth();
+                    return;
+
                 }
 
                 pairedDevices = bluetoothAdapter.getBondedDevices();
                 for (BluetoothDevice device : pairedDevices) {
                     if (device.getName().equals("HC-06")) {
                         macAddress = device.getAddress();
-                        Toast.makeText(getApplicationContext(),"O dispositivo foi encontrado no historico",Toast.LENGTH_SHORT).show();
+                        Toast.makeText(getApplicationContext(), "O dispositivo foi encontrado no historico", Toast.LENGTH_SHORT).show();
                         break;
                     }
                 }
@@ -101,9 +146,26 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
 
+                        int counter = 0;
+                        do{
+                            try {
+                                bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
+                                bluetoothSocket.connect();
+                            }catch(IOException err){
+                                err.printStackTrace();
+                            }
+                            counter++;
+                        }while (!bluetoothSocket.isConnected() && counter < 0);
+                        if(!bluetoothSocket.isConnected()){
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    Toast.makeText(MainActivity.this, "Não foi possivel se conectar ao dispositivo, tente novamente :(", Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                            return;
+                        }
                         try {
-                            bluetoothSocket = bluetoothDevice.createRfcommSocketToServiceRecord(uuid);
-                            bluetoothSocket.connect();
                             outputStream = bluetoothSocket.getOutputStream();
                             inputStream = bluetoothSocket.getInputStream();
                             Log.d("Message", "Connected to HC-06");
@@ -137,15 +199,16 @@ public class MainActivity extends AppCompatActivity {
                 if (!bluetoothAdapter.isEnabled()) {
                     try {
                         if (ActivityCompat.checkSelfPermission(getApplicationContext(), android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                            Toast.makeText(getApplicationContext(), "Não possui permissão necessaria", Toast.LENGTH_LONG).show();
+                            requestBluetoothPermission();
                             return;
                         }
                         Toast.makeText(getApplicationContext(), "Iniciando Bluetooth :)", Toast.LENGTH_LONG).show();
-                        Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-                        startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+                        turnOnBluetooth();
                     } catch (Error err) {
                         System.out.println(err);
                     }
+                } else {
+                    Toast.makeText(getApplicationContext(), "Bluetooth já esta ativo :)", Toast.LENGTH_LONG).show();
                 }
             }
         });
@@ -193,24 +256,29 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
-    private void readBluetoothDeviceInfo(){
+    private void readBluetoothDeviceInfo() {
         BtnReadInfo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        Buffer = new byte[1024];
-                        int numBytes;
-                        try {
-                            numBytes = inputStream.read(Buffer);
-                            String data = new String(Buffer, 0, numBytes);
-                            ConnectionText.setText(data);
-                        } catch (Exception e) {
-                            Log.d(TAG, "Input stream was disconnected", e);
+
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Buffer = new byte[1024];
+                            int numBytes;
+                            try {
+                                for(int i = 0; i < 30; i++) {
+                                    numBytes = inputStream.read(Buffer);
+                                    String data = new String(Buffer, 0, numBytes);
+
+                                    if (!data.isEmpty())
+                                        ConnectionText.setText(data);
+                                }
+                            } catch (Exception e) {
+                                Log.d(TAG, "Input stream was disconnected", e);
+                            }
                         }
-                    }
-                }).start();
+                    }).start();
             }
         });
     }
